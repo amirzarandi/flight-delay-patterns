@@ -1,0 +1,144 @@
+---
+title: "Flight Delay Patterns In R"
+author: "Amir Zarandi"
+date: "2022-11-01"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Introduction
+The following analysis assesses the data in flight delays during the first seven months of 2022 for flights in the USA. This data is publicly available here: https://www.kaggle.com/datasets/robikscube/flight-delay-dataset-20182022. The information was published by the U.S. Department of Transportation’s Bureau of Transportation Statistics (https://www.transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGK&QO_fu146_anzr=b0-gvzr) to track the on-time performance of domestic flights operated by large carriers. I took this opportunity to understand the data and figure out three main questions: 
+
+1. Is it possible to predict which flights will be cancelled or delayed?
+2. What can we predict about the delay time?
+3. How do different airlines compare in terms of delay time and average delay?
+
+After reviewing the intial items in the data, I decided on a couple of variables to focus on to include in this analysis.
+
+## Preprocessing Data 
+Below is code to load libraries.
+
+```{r}
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(naniar)
+library(forcats)
+library(tm)
+library(SnowballC)
+library(RColorBrewer)
+library(tidytext)
+library(scales)
+```
+
+### Read in the file
+
+```{r}
+library(readxl)
+flightData = read.csv("flight-data.csv")
+```
+
+### Drop NA values to include only the relevant data for analysis
+
+```{r}
+flightDataClean <- drop_na(flightData, DepDelayMinutes)
+```
+
+# What Can We Predict About Flight Status Based on the Carriers?
+Delays are divided into three categories, namely "on time or small delay" (up to 15 minutes of delay), "Medium delay" (15–45 minutes delay) and "Large delay" (45 minutes delay) (https://en.wikipedia.org/wiki/Flight_cancellation_and_delay). 
+
+## Catagorizing Data
+I divided the flights into the above-mentioned catagories, distinguishing between the flights that were only delayed and those that were eventually cancelled. 
+
+```{r}
+flightDataCat = flightDataClean %>%
+  mutate(Status = ifelse(DepDelayMinutes == 0, "OnTime", 
+                                ifelse(DepDelayMinutes <= 15, "SlightDelay", 
+                                       ifelse(DepDelayMinutes <= 45, "MediumDelay",
+                                              ifelse(DepDelayMinutes > 45, "LargeDelay", 
+                                                     NA)))))
+
+flightDataCat = flightDataCat %>% mutate(Status = ifelse(Cancelled == "True", 
+                                                         "Cancelled", Status))
+```
+
+## Bar Chart Analysis
+The bar chart below shows how different airlines compare in terms of the portion of flights that were delayed or cancelled. This can be used to determine how probable it is for a flight to be delayed based on the airline.
+
+```{r}
+ggplot(flightDataCat) + aes(x=Airline, fill = Status) + 
+  geom_bar() + 
+  labs(title="Flight Status by Airline", x = "Airline", 
+     y = "Number of Flights", 
+     caption = "(based on data from https://www.kaggle.com/datasets/
+     robikscube/flight-delay-dataset-20182022)") + 
+  coord_flip() + scale_y_continuous(labels = comma)
+```
+
+# Distribution of Delay Times
+If a flight is going to be delayed, what can we expect about the delay time? 
+
+## Processing Data
+We only focus on the delayed flights in this case.
+
+```{r}
+delayed = flightData %>% mutate(DepDelayMinutes = ifelse(DepDelayMinutes == 0, 
+                                                         NA, DepDelayMinutes)) 
+
+delayed <- drop_na(delayed, DepDelayMinutes)
+```
+
+## Frequency Analysis
+We can see most of the delays are very close to 0 with a long tail.
+
+```{r}
+delayed %>% group_by(DepDelayMinutes) %>% summarise(cnt = n()) %>%
+  ggplot(aes(x= DepDelayMinutes, y = cnt/nrow(delayed))) +
+  theme_bw() + scale_x_continuous(limits = c(0, 60)) + geom_col(show.legend = FALSE) +
+  labs(x="Delay in Minutes", y="Frequency", title="Distribution of Flight Delays", 
+       subtitle = "Only Delay Values less than 60 minutes shown. ", 
+       caption = "(based on data from https://www.kaggle.com/datasets/
+       robikscube/flight-delay-dataset-20182022)")
+
+```
+
+# Which Carriers Are Continuially Running into Delays?
+Instead of focusing on the distinction between small and large delays, I wanted to see which airline has the most delays and which airline has on average the longest delays. 
+
+## Processing Data
+Below is code to create a summary dataframe by Departure Delay and Airline Name.
+
+```{r}
+flightDataDelay <- flightDataClean %>% select(DepDelayMinutes, Airline) %>%
+  group_by(Airline) %>%
+  summarise(n = length(Airline), total = sum(DepDelayMinutes), 
+            avrdelay = mean(DepDelayMinutes)) %>%
+  arrange(desc(n)) %>%
+  data.frame() %>%
+  top_n(20, wt=n)
+```
+
+## Bar Chart Analysis
+The chart below shows the airlines with the highest total of delays. This is a summary of Delay Time for the year in total by descending order from the top airline down. As you can see Southwest Airlines has the most delays by a considerable amount. Although they have the highest total of delays, the do not have the highest average, meaning they are running a lot of flights with delays but on average they do not have the largest delay times. That would go to JetBlue Airlines, who has a much lower total amount of delays, but the average a higher delay per flight.
+
+```{r}
+ggplot(flightDataDelay, aes(x=reorder(Airline, n), y=n, 
+                            label=round(avrdelay, digits = 0))) + 
+  geom_bar(stat="identity", fill='red') +
+  coord_flip() +
+  geom_text(position=position_dodge(width=0.5), hjust=-0.25) +
+  labs(title = "Total Departure Delays by Airline",
+       x = "Airline",
+       y = "Total Delay",
+       subtitle = "Average Delay Value shown to the right of bar",
+       caption = "(based on data from https://www.kaggle.com/datasets/
+       robikscube/flight-delay-dataset-20182022)") +
+  scale_y_continuous(labels = comma_format(big.mark = ".", decimal.mark = ","))
+```
